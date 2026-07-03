@@ -2,9 +2,10 @@ name: UR Kanagawa Monitor
 
 on:
   schedule:
-    # 08:00 and 20:00 JST (UTC+9) → 23:00 and 11:00 UTC
-    - cron: "0 23 * * *"
-    - cron: "0 11 * * *"
+    # 08:00 / 14:00 / 20:00 JST (UTC+9)
+    - cron: "0 23 * * *"   # 08:00 JST
+    - cron: "0 5 * * *"    # 14:00 JST
+    - cron: "0 11 * * *"   # 20:00 JST
   workflow_dispatch:
 
 permissions:
