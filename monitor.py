@@ -39,6 +39,30 @@ TOKYO_NEAR_AREAS = {
 MIN_ROOMS_PATTERN = re.compile(r"^(2|3|4)")
 
 
+def parse_floorspace(value: str | int | float | None) -> float:
+    """Parse UR floorspace field, e.g. '42.13&#13217;' or '48㎡' -> 42.13 / 48."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    # Remove ㎡ markers before stripping digits — &#13217; contains digits that corrupt parsing
+    s = re.sub(r"&#13217;?", "", s)
+    s = s.replace("㎡", "").replace("m²", "").replace("m2", "").strip()
+    match = re.search(r"^(\d+(?:\.\d+)?)", s)
+    if match:
+        return float(match.group(1))
+    return 0.0
+
+
+def format_area(area: float) -> str:
+    if area <= 0:
+        return "—"
+    if area == int(area):
+        return f"{int(area)}"
+    return f"{area:.2f}".rstrip("0").rstrip(".")
+
+
 @dataclass(frozen=True)
 class Vacancy:
     id: str
@@ -84,7 +108,7 @@ def parse_room(v: dict, danchi_name: str, shisya: str, danchi: str, area_id: str
         return None
 
     area_str = v.get("floorspace") or "0"
-    area = float(re.sub(r"[^\d.]", "", area_str) or "0")
+    area = parse_floorspace(area_str)
     rent_str = v.get("rent") or v.get("rent_normal") or "0"
     rent = int(re.sub(r"\D", "", rent_str) or "0")
     fee_str = v.get("commonfee") or "0"
@@ -184,7 +208,7 @@ def format_vacancy(v: Vacancy) -> str:
     star = "⭐ " if v.tokyo_near else ""
     return (
         f"{star}<b>{v.danchi_name}</b>\n"
-        f"  {v.room_number} | {v.floor_plan} | {v.area}㎡ | {v.floor}F\n"
+        f"  {v.room_number} | {v.floor_plan} | {format_area(v.area)}㎡ | {v.floor}F\n"
         f"  ¥{v.rent:,} + 管理费 ¥{v.management_fee:,}\n"
         f"  <a href=\"{v.url}\">查看详情</a>"
     )
