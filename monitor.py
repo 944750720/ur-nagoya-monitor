@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,6 +30,13 @@ NAGOYA_AREAS = [
 # Central wards (Naka, Higashi, Nakamura, Chikusa, Showa, Atsuta) — shown with a star
 CENTER_AREAS = {
     "101", "102", "105", "106", "107", "109",
+}
+
+AREA_NAMES = {
+    "101": "千種区", "102": "東区", "103": "北区", "104": "西区",
+    "105": "中村区", "106": "中区", "107": "昭和区", "108": "瑞穂区",
+    "109": "熱田区", "110": "中川区", "111": "港区", "113": "守山区",
+    "114": "緑区", "115": "名東区", "116": "天白区",
 }
 
 MIN_ROOMS_PATTERN = re.compile(r"^(2|3|4)")
@@ -199,14 +207,25 @@ def find_new_vacancies(current: list[Vacancy], known_ids: set[str]) -> list[Vaca
     return [v for v in current if v.id not in known_ids]
 
 
-def format_vacancy(v: Vacancy) -> str:
-    star = "⭐ " if v.center else ""
-    return (
-        f"{star}<b>{v.danchi_name}</b>\n"
-        f"  {v.room_number} | {v.floor_plan} | {format_area(v.area)}㎡ | {v.floor}F\n"
-        f"  ¥{v.rent:,} + 管理费 ¥{v.management_fee:,}\n"
-        f"  <a href=\"{v.url}\">查看详情</a>"
-    )
+def build_markdown_report(vacancies: list[Vacancy], now: str) -> str:
+    lines = [
+        f"# 名古屋 UR 新空房（{len(vacancies)} 件）",
+        "",
+        f"{now} ・ ⭐ = 市中心区域",
+        "",
+        "| | 团地 | 区域 | 房号 | 户型 | 面积 | 楼层 | 租金 | 管理费 |",
+        "|---|------|------|------|------|------|------|------|--------|",
+    ]
+    for v in vacancies:
+        star = "⭐" if v.center else ""
+        ward = AREA_NAMES.get(v.area_id, v.area_id)
+        lines.append(
+            f"| {star} | [{v.danchi_name}]({v.url}) | {ward} | {v.room_number} "
+            f"| {v.floor_plan} | {format_area(v.area)}㎡ | {v.floor}F "
+            f"| ¥{v.rent:,} | ¥{v.management_fee:,} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def send_telegram(message: str) -> None:
@@ -246,6 +265,41 @@ def send_telegram(message: str) -> None:
                 raise RuntimeError(f"Telegram API error: {result}")
 
 
+def send_telegram_document(filename: str, content: str, caption: str) -> None:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set")
+
+    boundary = uuid.uuid4().hex
+    parts: list[bytes] = []
+    for name, value in (("chat_id", chat_id), ("caption", caption), ("parse_mode", "HTML")):
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode("utf-8")
+        )
+    parts.append(
+        (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"{filename}\"\r\n"
+            f"Content-Type: text/markdown; charset=utf-8\r\n\r\n"
+        ).encode("utf-8")
+        + content.encode("utf-8")
+        + b"\r\n"
+    )
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(parts)
+
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendDocument",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+        if not result.get("ok"):
+            raise RuntimeError(f"Telegram API error: {result}")
+
+
 def main() -> int:
     config = load_config()
     state = load_state()
@@ -283,9 +337,10 @@ def main() -> int:
     now = datetime.now(jst).strftime("%Y-%m-%d %H:%M JST")
 
     if new_vacancies:
-        header = f"🏠 <b>名古屋 UR 新空房</b>（{len(new_vacancies)} 件）\n{now}\n⭐ = 市中心区域\n\n"
-        body = "\n\n".join(format_vacancy(v) for v in new_vacancies)
-        send_telegram(header + body)
+        report = build_markdown_report(new_vacancies, now)
+        stamp = datetime.now(jst).strftime("%Y%m%d-%H%M")
+        caption = f"🏠 <b>名古屋 UR 新空房</b>（{len(new_vacancies)} 件）\n{now}\n完整列表见附件 ⭐ = 市中心区域"
+        send_telegram_document(f"ur-nagoya-{stamp}.md", report, caption)
         print(f"Sent notification for {len(new_vacancies)} new vacancies")
     else:
         print(f"No new vacancies ({len(unique)} total matching rooms tracked)")
