@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor UR Kanagawa vacancies and notify via Telegram."""
+"""Monitor UR Nagoya vacancies and notify via Telegram."""
 
 from __future__ import annotations
 
@@ -15,25 +15,20 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 API_URL = "https://chintai.r6.ur-net.go.jp/chintai/api/bukken/result/bukken_result/"
-TDFK_KANAGAWA = "14"
-BLOCK = "kanto"
+TDFK_AICHI = "23"
+BLOCK = "tokai"
 STATE_PATH = Path(__file__).parent / "data" / "state.json"
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
-# All Kanagawa sub-area IDs (skcs)
-KANAGAWA_AREAS = [
+# All Nagoya-city sub-area IDs (skcs) — no 112 (Minami-ku has no UR listings)
+NAGOYA_AREAS = [
     "101", "102", "103", "104", "105", "106", "107", "108", "109", "110",
-    "111", "112", "113", "114", "115", "117", "118",
-    "131", "132", "133", "134", "135", "136", "137",
-    "151", "152", "153",
-    "201", "203", "204", "205", "207",
-    "211", "212", "213", "215", "216",
+    "111", "113", "114", "115", "116",
 ]
 
-# Areas closer to Tokyo — shown with a star in notifications
-TOKYO_NEAR_AREAS = {
-    "101", "102", "104", "106", "109", "110", "111", "112", "113", "114", "115", "117", "118",
-    "131", "132", "133", "134", "135", "136", "137",
+# Central wards (Naka, Higashi, Nakamura, Chikusa, Showa, Atsuta) — shown with a star
+CENTER_AREAS = {
+    "101", "102", "105", "106", "107", "109",
 }
 
 MIN_ROOMS_PATTERN = re.compile(r"^(2|3|4)")
@@ -75,7 +70,7 @@ class Vacancy:
     floor: int
     url: str
     area_id: str
-    tokyo_near: bool
+    center: bool
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -115,7 +110,7 @@ def parse_room(v: dict, danchi_name: str, shisya: str, danchi: str, area_id: str
     management_fee = int(re.sub(r"\D", "", fee_str) or "0")
     floor_match = re.search(r"(\d+)", v.get("floor") or "")
     floor_num = int(floor_match.group(1)) if floor_match else 0
-    url = f"https://www.ur-net.go.jp/chintai/kanto/kanagawa/{shisya}_{danchi}0.html"
+    url = f"https://www.ur-net.go.jp/chintai/tokai/aichi/{shisya}_{danchi}0.html"
 
     return Vacancy(
         id=f"{danchi_name}_{room_number}".replace(" ", "_"),
@@ -128,7 +123,7 @@ def parse_room(v: dict, danchi_name: str, shisya: str, danchi: str, area_id: str
         floor=floor_num,
         url=url,
         area_id=area_id,
-        tokyo_near=area_id in TOKYO_NEAR_AREAS,
+        center=area_id in CENTER_AREAS,
     )
 
 
@@ -137,8 +132,8 @@ def fetch_area_vacancies(area_id: str, delay_sec: float) -> list[Vacancy]:
         "mode": "area",
         "skcs": area_id,
         "block": BLOCK,
-        "tdfk": TDFK_KANAGAWA,
-        "rireki_tdfk": TDFK_KANAGAWA,
+        "tdfk": TDFK_AICHI,
+        "rireki_tdfk": TDFK_AICHI,
         "orderByField": "0",
         "pageSize": "30",
         "pageIndex": "0",
@@ -155,9 +150,9 @@ def fetch_area_vacancies(area_id: str, delay_sec: float) -> list[Vacancy]:
         headers={
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
             "Accept": "application/json",
-            "User-Agent": "ur-kanagawa-monitor/1.0 (personal use)",
+            "User-Agent": "ur-nagoya-monitor/1.0 (personal use)",
             "Origin": "https://www.ur-net.go.jp",
-            "Referer": f"https://www.ur-net.go.jp/chintai/kanto/kanagawa/area/{area_id}.html",
+            "Referer": f"https://www.ur-net.go.jp/chintai/tokai/aichi/area/{area_id}.html",
             "X-Requested-With": "XMLHttpRequest",
         },
         method="POST",
@@ -205,7 +200,7 @@ def find_new_vacancies(current: list[Vacancy], known_ids: set[str]) -> list[Vaca
 
 
 def format_vacancy(v: Vacancy) -> str:
-    star = "⭐ " if v.tokyo_near else ""
+    star = "⭐ " if v.center else ""
     return (
         f"{star}<b>{v.danchi_name}</b>\n"
         f"  {v.room_number} | {v.floor_plan} | {format_area(v.area)}㎡ | {v.floor}F\n"
@@ -260,7 +255,7 @@ def main() -> int:
     all_vacancies: list[Vacancy] = []
     errors: list[str] = []
 
-    for area_id in KANAGAWA_AREAS:
+    for area_id in NAGOYA_AREAS:
         try:
             vacancies = fetch_area_vacancies(area_id, delay)
             all_vacancies.extend(vacancies)
@@ -280,15 +275,15 @@ def main() -> int:
             unique.append(v)
 
     new_vacancies = find_new_vacancies(unique, known_ids)
-    # Sort: Tokyo-near first, then by rent
-    new_vacancies.sort(key=lambda v: (not v.tokyo_near, v.rent))
+    # Sort: central wards first, then by rent
+    new_vacancies.sort(key=lambda v: (not v.center, v.rent))
 
     from datetime import datetime, timezone, timedelta
     jst = timezone(timedelta(hours=9))
     now = datetime.now(jst).strftime("%Y-%m-%d %H:%M JST")
 
     if new_vacancies:
-        header = f"🏠 <b>神奈川 UR 新空房</b>（{len(new_vacancies)} 件）\n{now}\n⭐ = 近东京区域\n\n"
+        header = f"🏠 <b>名古屋 UR 新空房</b>（{len(new_vacancies)} 件）\n{now}\n⭐ = 市中心区域\n\n"
         body = "\n\n".join(format_vacancy(v) for v in new_vacancies[:20])
         if len(new_vacancies) > 20:
             body += f"\n\n… 还有 {len(new_vacancies) - 20} 件未显示"

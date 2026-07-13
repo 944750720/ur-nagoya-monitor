@@ -1,4 +1,4 @@
-name: UR Kanagawa Monitor
+name: UR Nagoya Monitor
 
 on:
   # Triggered by cron-job.org at 08:00 / 14:00 / 20:00 JST (see README)
