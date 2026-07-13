@@ -284,9 +284,7 @@ def main() -> int:
 
     if new_vacancies:
         header = f"🏠 <b>名古屋 UR 新空房</b>（{len(new_vacancies)} 件）\n{now}\n⭐ = 市中心区域\n\n"
-        body = "\n\n".join(format_vacancy(v) for v in new_vacancies[:20])
-        if len(new_vacancies) > 20:
-            body += f"\n\n… 还有 {len(new_vacancies) - 20} 件未显示"
+        body = "\n\n".join(format_vacancy(v) for v in new_vacancies)
         send_telegram(header + body)
         print(f"Sent notification for {len(new_vacancies)} new vacancies")
     else:
